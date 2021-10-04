@@ -1,4 +1,5 @@
 //! The Sinsemilla hash function and commitment scheme.
+#![no_std]
 
 use group::Curve;
 
@@ -59,61 +60,37 @@ pub(crate) fn i2lebsp_k(int: usize) -> [bool; K] {
 
 /// Pads the given iterator (which MUST have length $\leq K * C$) with zero-bits to a
 /// multiple of $K$ bits.
-struct Pad<I: Iterator<Item = bool>> {
-    /// The iterator we are padding.
+struct Chunks<I: Iterator<Item = bool>> {
     inner: I,
-    /// The measured length of the inner iterator.
-    ///
-    /// This starts as a lower bound, and will be accurate once `padding_left.is_some()`.
-    len: usize,
-    /// The amount of padding that remains to be emitted.
-    padding_left: Option<usize>,
+    index: usize,
 }
 
-impl<I: Iterator<Item = bool>> Pad<I> {
+impl<I: Iterator<Item = bool>> Chunks<I> {
     fn new(inner: I) -> Self {
-        Pad {
-            inner,
-            len: 0,
-            padding_left: None,
-        }
+        Chunks { inner, index: 0 }
     }
 }
 
-impl<I: Iterator<Item = bool>> Iterator for Pad<I> {
-    type Item = bool;
+impl<I: Iterator<Item = bool>> Iterator for Chunks<I> {
+    type Item = [bool; 10];
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            // If we have identified the required padding, the inner iterator has ended,
-            // and we will never poll it again.
-            if let Some(n) = self.padding_left.as_mut() {
-                if *n == 0 {
-                    // Either we already emitted all necessary padding, or there was no
-                    // padding required.
-                    break None;
-                } else {
-                    // Emit the next padding bit.
-                    *n -= 1;
-                    break Some(false);
-                }
-            } else if let Some(ret) = self.inner.next() {
-                // We haven't reached the end of the inner iterator yet.
-                self.len += 1;
-                assert!(self.len <= K * C);
-                break Some(ret);
-            } else {
-                // Inner iterator just ended, so we now know its length.
-                let rem = self.len % K;
-                if rem > 0 {
-                    // The inner iterator requires padding in the range [1,K).
-                    self.padding_left = Some(K - rem);
-                } else {
-                    // No padding required.
-                    self.padding_left = Some(0);
-                }
-            }
+        let fst = self.inner.next();
+        if fst.is_none() {
+            return None;
         }
+        Some([
+            fst.unwrap(),
+            self.inner.next().unwrap_or(false),
+            self.inner.next().unwrap_or(false),
+            self.inner.next().unwrap_or(false),
+            self.inner.next().unwrap_or(false),
+            self.inner.next().unwrap_or(false),
+            self.inner.next().unwrap_or(false),
+            self.inner.next().unwrap_or(false),
+            self.inner.next().unwrap_or(false),
+            self.inner.next().unwrap_or(false),
+        ])
     }
 }
 
@@ -149,15 +126,11 @@ impl HashDomain {
 
     #[allow(non_snake_case)]
     fn hash_to_point_inner(&self, msg: impl Iterator<Item = bool>) -> IncompletePoint {
-        let padded: Vec<_> = Pad::new(msg).collect();
-
-        padded
-            .chunks(K)
-            .fold(IncompletePoint::from(self.Q), |acc, chunk| {
-                let (S_x, S_y) = sinsemilla_s(lebs2ip_k(chunk) as usize);
-                let S_chunk = pallas::Affine::from_xy(S_x, S_y).unwrap();
-                (acc + S_chunk) + acc
-            })
+        Chunks::new(msg).fold(IncompletePoint::from(self.Q), |acc, chunk| {
+            let (S_x, S_y) = sinsemilla_s(lebs2ip_k(&chunk) as usize);
+            let S_chunk = pallas::Affine::from_xy(S_x, S_y).unwrap();
+            (acc + S_chunk) + acc
+        })
     }
 
     /// $\mathsf{SinsemillaHash}$ from [§ 5.4.1.9][concretesinsemillahash].
@@ -188,12 +161,17 @@ pub struct CommitDomain {
     R: pallas::Point,
 }
 
+// TODO: no_std string concat
 impl CommitDomain {
     /// Constructs a new `CommitDomain` with a specific prefix string.
     pub fn new(domain: &str) -> Self {
-        let m_prefix = format!("{}-M", domain);
-        let r_prefix = format!("{}-r", domain);
-        //let hasher_r = pallas::Point::hash_to_curve(&r_prefix);
+        //let m_prefix = format!("{}-M", domain);
+        //let r_prefix = format!("{}-r", domain);
+        let mut m_buffer = [0; 64];
+        let mut r_buffer = [0; 64];
+        let m_prefix = no_alloc_concat(domain, "-M", &mut m_buffer);
+        let r_prefix = no_alloc_concat(domain, "-r", &mut r_buffer);
+
         CommitDomain {
             M: HashDomain::new(&m_prefix),
             R: pallas::Point::unboxed_hash_to_curve(&r_prefix, &[]),
@@ -231,6 +209,24 @@ impl CommitDomain {
     pub(crate) fn R(&self) -> pallas::Point {
         self.R
     }
+}
+
+fn no_alloc_concat<'a, 'b, 'c>(
+    first: &'a str,
+    second: &'b str,
+    buffer: &'c mut [u8; 64],
+) -> &'c str {
+    use core::str::from_utf8;
+    let len = first.len() + second.len();
+    assert!(len <= 64);
+    //let mut buffer: [u8; 64] = [0; 64];
+    for (buf, x) in (&mut buffer[..]).iter_mut().zip(first.bytes()) {
+        *buf = x;
+    }
+    for (buf, x) in (&mut buffer[second.len()..]).iter_mut().zip(second.bytes()) {
+        *buf = x;
+    }
+    from_utf8(&buffer[..len]).unwrap()
 }
 
 #[cfg(all(test, feature = "std"))]
@@ -319,7 +315,8 @@ mod tests {
 
 #[test]
 fn main() {
-    println!("========================");
+    //use std;
+    //std::println!("========================");
     let domain = HashDomain::new("test");
     let message = [
         true, true, false, true, false, true, false, true, false, true, true,
@@ -327,6 +324,6 @@ fn main() {
     .iter()
     .cloned();
     let p = domain.hash_to_point(message);
-    println!("Hello {:?}", p);
-    println!("========================");
+    //std::println!("Hello {:?}", p);
+    //std::println!("========================");
 }
