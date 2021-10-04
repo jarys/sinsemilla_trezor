@@ -6,6 +6,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-group = { version = "0.11", default-features = false }
+group = { version = "0.11" }
 subtle = { version = "2.3", default-features = false }
 pasta_curves = { git = "https://github.com/jarys/pasta_curves.git", branch = "no-std-hashtocurve", default-features = false }

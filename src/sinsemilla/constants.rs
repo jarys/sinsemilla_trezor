@@ -59,18 +59,18 @@ pub const Q_MERKLE_CRH: ([u8; 32], [u8; 32]) = (
 /// SWU hash-to-curve personalization for Sinsemilla $S$ generators.
 pub const S_PERSONALIZATION: &str = "z.cash:SinsemillaS";
 
-#[cfg(test)]
+/*#[cfg(test)]
 mod tests {
     use super::super::{CommitDomain, HashDomain};
     use super::*;
-    use crate::constants::{
+    use crate::sinsemilla::constants::{
         COMMIT_IVK_PERSONALIZATION, MERKLE_CRH_PERSONALIZATION, NOTE_COMMITMENT_PERSONALIZATION,
     };
     use group::Curve;
-    use halo2::arithmetic::{CurveAffine, CurveExt, FieldExt};
-    use halo2::pasta::pallas;
+    use pasta_curves::arithmetic::{CurveAffine, CurveExt, FieldExt};
+    use pasta_curves::pallas;
 
-    #[test]
+    /*#[test]
     fn sinsemilla_s() {
         use super::super::sinsemilla_s::SINSEMILLA_S;
         let hasher = pallas::Point::hash_to_curve(S_PERSONALIZATION);
@@ -83,7 +83,7 @@ mod tests {
             let actual = SINSEMILLA_S[j as usize];
             assert_eq!(computed, actual);
         }
-    }
+    }*/
 
     #[test]
     fn q_note_commitment_m() {
@@ -140,4 +140,4 @@ mod tests {
 
         assert_eq!(two_pow_k * inv_two_pow_k, pallas::Base::one());
     }
-}
+}*/

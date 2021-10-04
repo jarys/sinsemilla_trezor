@@ -1,6 +1,7 @@
 //! The Sinsemilla hash function and commitment scheme.
 
-use group::Wnaf;
+use group::Curve;
+
 use pasta_curves::arithmetic::{CurveAffine, CurveExt};
 use pasta_curves::pallas;
 use subtle::CtOption;
@@ -14,6 +15,33 @@ mod constants;
 //mod sinsemilla_s;
 pub use constants::*;
 //pub(crate) use sinsemilla_s::*;
+
+fn extract_p(point: &pallas::Point) -> pallas::Base {
+    point
+        .to_affine()
+        .coordinates()
+        .map(|c| *c.x())
+        .unwrap_or_else(pallas::Base::zero)
+}
+
+fn extract_p_bottom(point: CtOption<pallas::Point>) -> CtOption<pallas::Base> {
+    point.map(|p| extract_p(&p))
+}
+
+/// The sequence of bits representing a u64 in little-endian order.
+///
+/// # Panics
+///
+/// Panics if the expected length of the sequence `NUM_BITS` exceeds
+/// 64.
+fn i2lebsp<const NUM_BITS: usize>(int: u64) -> [bool; NUM_BITS] {
+    assert!(NUM_BITS <= 64);
+    let mut res = [false; NUM_BITS];
+    for i in 0..NUM_BITS {
+        res[i] = (int & (1 << i)) != 0
+    }
+    return res;
+}
 
 pub(crate) fn lebs2ip_k(bits: &[bool]) -> u32 {
     assert!(bits.len() == K);
@@ -97,13 +125,18 @@ pub struct HashDomain {
     Q: pallas::Point,
 }
 
-fn sinsemilla_s(j: u32) {}
+// TODO: j < 2^K check
+fn sinsemilla_s(j: usize) -> (pallas::Base, pallas::Base) {
+    let hash = pallas::Point::unboxed_hash_to_curve(S_PERSONALIZATION, &j.to_le_bytes());
+    let point = hash.to_affine().coordinates().unwrap();
+    (*point.x(), *point.y())
+}
 
 impl HashDomain {
     /// Constructs a new `HashDomain` with a specific prefix string.
     pub fn new(domain: &str) -> Self {
         HashDomain {
-            Q: pallas::Point::hash_to_curve(Q_PERSONALIZATION)(domain.as_bytes()),
+            Q: pallas::Point::unboxed_hash_to_curve(Q_PERSONALIZATION, domain.as_bytes()),
         }
     }
 
@@ -121,7 +154,7 @@ impl HashDomain {
         padded
             .chunks(K)
             .fold(IncompletePoint::from(self.Q), |acc, chunk| {
-                let (S_x, S_y) = SINSEMILLA_S[lebs2ip_k(chunk) as usize];
+                let (S_x, S_y) = sinsemilla_s(lebs2ip_k(chunk) as usize);
                 let S_chunk = pallas::Affine::from_xy(S_x, S_y).unwrap();
                 (acc + S_chunk) + acc
             })
@@ -160,10 +193,10 @@ impl CommitDomain {
     pub fn new(domain: &str) -> Self {
         let m_prefix = format!("{}-M", domain);
         let r_prefix = format!("{}-r", domain);
-        let hasher_r = pallas::Point::hash_to_curve(&r_prefix);
+        //let hasher_r = pallas::Point::hash_to_curve(&r_prefix);
         CommitDomain {
             M: HashDomain::new(&m_prefix),
-            R: hasher_r(&[]),
+            R: pallas::Point::unboxed_hash_to_curve(&r_prefix, &[]),
         }
     }
 
@@ -177,8 +210,8 @@ impl CommitDomain {
         r: &pallas::Scalar,
     ) -> CtOption<pallas::Point> {
         // We use complete addition for the blinding factor.
-        CtOption::<pallas::Point>::from(self.M.hash_to_point_inner(msg))
-            .map(|p| p + Wnaf::new().scalar(r).base(self.R))
+        CtOption::<pallas::Point>::from(self.M.hash_to_point_inner(msg)).map(|p| p + self.R * r)
+        // TODO: left multiplication
     }
 
     /// $\mathsf{SinsemillaShortCommit}$ from [§ 5.4.8.4][concretesinsemillacommit].
@@ -204,6 +237,7 @@ impl CommitDomain {
 mod tests {
     use super::{i2lebsp_k, lebs2ip_k, Pad, K};
     use rand::{self, rngs::OsRng, Rng};
+    use std::vec::{vec, Vec};
 
     #[test]
     fn pad() {
